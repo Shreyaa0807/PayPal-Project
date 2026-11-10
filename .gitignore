@@ -1,6 +1,10 @@
+.env
+*.db
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
 node_modules/
 dist/
-*.tsbuildinfo
-.env
 .env.*
 !.env.example
