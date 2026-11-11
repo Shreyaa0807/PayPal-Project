@@ -1,0 +1,21 @@
+/* Styles for the "Real PayPal Sandbox payment" panel (additive; does not touch style.css) */
+.real-panel { margin: 22px 0 6px; padding: 24px; }
+.real-panel h3 { margin: 0 0 4px; }
+.real-panel > p { margin: 0 0 16px; color: #6b7a90; font-size: 14px; line-height: 1.5; }
+.real-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.real-row input[type='text'] { border: 1px solid #dbe3f0; border-radius: 10px; padding: 10px 12px; font-size: 14px; width: 130px; }
+.real-order { margin-top: 16px; padding: 14px 16px; border-radius: 12px; background: #f4f8ff; border: 1px solid #dbe8ff; font-size: 14px; }
+.real-order code { font-weight: 600; word-break: break-all; }
+.real-order a { color: #1473e6; font-weight: 600; text-decoration: none; }
+.real-approve { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.real-note { margin-top: 12px; font-size: 13px; color: #6b7a90; }
+
+.agent-step{display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:13px}
+.agent-step div{display:flex;flex-direction:column}.agent-step strong{text-transform:capitalize}.agent-step span{color:#667085}
+.agent-dot{width:9px;height:9px;border-radius:50%;margin-top:5px;background:#98a2b3;flex:none}
+.agent-step.ok .agent-dot{background:#12b76a}.agent-step.failed .agent-dot{background:#f04438}.agent-step.skipped .agent-dot{background:#f79009}
+.log-panel{margin-top:20px}.log-input{width:100%;font-family:ui-monospace,monospace;font-size:12px;padding:12px;border:1px solid #d5dbe7;border-radius:10px;margin:8px 0;box-sizing:border-box}
+.log-result{margin-top:12px;font-size:13px}.log-result p{margin:6px 0}.log-result code{font-size:12px;word-break:break-all}.log-result .rejected{color:#b42318}
+
+.ag-wrap{width:100%;padding:0 12px 12px}.ag-wrap .ag-root-wrapper{border:0;--ag-font-family:inherit}
+.ag-wrap .ag-header{background:#f6f8fc;font-size:11px;letter-spacing:.06em}.ag-wrap .ag-cell{display:flex;align-items:center}
