@@ -33,6 +33,17 @@ class PayPalError(Exception):
             return details[0]["issue"]
         return self.body.get("name") or self.body.get("error")
 
+    @property
+    def detail_text(self) -> str:
+        """Human-readable reason straight from PayPal (issue, field and description)."""
+        details = self.body.get("details") or []
+        d = details[0] if details else {}
+        parts = [self.error_code or f"HTTP {self.status}"]
+        if d.get("field"):
+            parts.append(f"at {d['field']}")
+        text = d.get("description") or self.body.get("message")
+        return " ".join(parts) + (f": {text}" if text else "")
+
 
 @dataclass
 class PayPalResponse:
@@ -54,8 +65,10 @@ def _check_config() -> None:
         raise PayPalNotConfigured("Only the PayPal Sandbox is supported (PAYPAL_ENV must be 'sandbox').")
 
 
-def _client() -> httpx.Client:
-    return httpx.Client(base_url=SANDBOX_BASE, timeout=get_settings().paypal_timeout_s)
+def _client(read_timeout: float | None = None) -> httpx.Client:
+    t = get_settings().paypal_timeout_s
+    # A short READ timeout still lets the request be sent in full; only the wait for the response is cut short.
+    return httpx.Client(base_url=SANDBOX_BASE, timeout=httpx.Timeout(t, read=read_timeout) if read_timeout is not None else t)
 
 
 def get_access_token() -> str:
@@ -83,13 +96,13 @@ def _json(r: httpx.Response) -> dict:
         return {}
 
 
-def _call(method: str, path: str, *, json_body: dict | None = None, request_id: str | None = None) -> PayPalResponse:
+def _call(method: str, path: str, *, json_body: dict | None = None, request_id: str | None = None, read_timeout: float | None = None) -> PayPalResponse:
     token = get_access_token()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     if request_id:
         headers["PayPal-Request-Id"] = request_id  # idempotency key
     try:
-        with _client() as c:
+        with _client(read_timeout) as c:
             r = c.request(method, path, headers=headers, json=json_body)
     except httpx.TimeoutException as e:
         raise PayPalTimeout(f"{method} {path} timed out") from e
@@ -99,27 +112,35 @@ def _call(method: str, path: str, *, json_body: dict | None = None, request_id: 
     return resp
 
 
-def create_order(amount: str, currency: str, description: str | None, request_id: str | None = None) -> PayPalResponse:
+def _order_body(amount: str, currency: str, description: str | None, style: str) -> dict:
     s = get_settings()
+    unit = {"reference_id": "default", "description": (description or "PaymentOps AI sandbox order")[:127],
+            "amount": {"currency_code": currency, "value": amount}}
+    ctx = {"brand_name": "PaymentOps AI", "user_action": "PAY_NOW",
+           "return_url": f"{s.frontend_url}/checkout/return", "cancel_url": f"{s.frontend_url}/checkout/cancel"}
+    if style == "payment_source":
+        return {"intent": "CAPTURE", "purchase_units": [unit], "payment_source": {"paypal": {"experience_context": {
+            **ctx, "payment_method_preference": "IMMEDIATE_PAYMENT_REQUIRED"}}}}
+    return {"intent": "CAPTURE", "purchase_units": [unit], "application_context": ctx}  # legacy style, widely accepted
+
+
+def create_order(amount: str, currency: str, description: str | None, request_id: str | None = None) -> PayPalResponse:
+    """Create an order. If PayPal rejects the newer payment_source body, retry once with the legacy application_context body."""
     request_id = request_id or str(uuid4())
-    body = {
-        "intent": "CAPTURE",
-        "purchase_units": [{"reference_id": "default", "description": (description or "PaymentOps AI sandbox order")[:127],
-                            "amount": {"currency_code": currency, "value": amount}}],
-        "payment_source": {"paypal": {"experience_context": {
-            "payment_method_preference": "IMMEDIATE_PAYMENT_ALLOWED", "brand_name": "PaymentOps AI (Sandbox)",
-            "user_action": "PAY_NOW",
-            "return_url": f"{s.frontend_url}/checkout/return", "cancel_url": f"{s.frontend_url}/checkout/cancel"}}},
-    }
-    return _call("POST", "/v2/checkout/orders", json_body=body, request_id=request_id)
+    try:
+        return _call("POST", "/v2/checkout/orders", json_body=_order_body(amount, currency, description, "payment_source"), request_id=request_id)
+    except PayPalError as e:
+        if e.status not in (400, 422):
+            raise
+    return _call("POST", "/v2/checkout/orders", json_body=_order_body(amount, currency, description, "application_context"), request_id=str(uuid4()))
 
 
 def get_order(order_id: str) -> PayPalResponse:
     return _call("GET", f"/v2/checkout/orders/{order_id}")
 
 
-def capture_order(order_id: str, request_id: str) -> PayPalResponse:
-    return _call("POST", f"/v2/checkout/orders/{order_id}/capture", json_body={}, request_id=request_id)
+def capture_order(order_id: str, request_id: str, read_timeout: float | None = None) -> PayPalResponse:
+    return _call("POST", f"/v2/checkout/orders/{order_id}/capture", json_body={}, request_id=request_id, read_timeout=read_timeout)
 
 
 def approve_link(order_body: dict) -> str | None:

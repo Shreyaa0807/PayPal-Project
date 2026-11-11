@@ -30,6 +30,7 @@ class EventIn(BaseModel):
 
 class InvestigateIn(BaseModel):
     use_llm: bool = True
+    verify: bool = Field(default=True, description="Let the investigator re-check the current state with PayPal (read-only) first")
     actor: str = Field(default="user", max_length=80)
 
 
@@ -47,6 +48,12 @@ class CreateOrderIn(BaseModel):
 class CaptureIn(BaseModel):
     approved_by: str = Field(min_length=1, max_length=80, description="Human who explicitly approves this payment operation")
     confirm: bool = Field(description="Must be true: explicit human approval")
+    simulate_timeout: bool = Field(default=False, description="DEMO ONLY: cut this capture's wait for PayPal's response short to produce a genuine client-side timeout")
+
+
+class LogIn(BaseModel):
+    log_text: str = Field(min_length=10, max_length=20000, description="Raw merchant application log (pasted)")
+    use_llm: bool = True
 
 
 def incident_dict(inc: Incident) -> dict:

@@ -204,17 +204,50 @@ def open_incident(db: Session, order_ref: str, actor: str = "user") -> Incident:
     return inc
 
 
-def run_investigation(db: Session, incident: Incident, actor: str = "user", use_llm: bool = True) -> tuple[Investigation, TimelineAnalysis, SafetyResult]:
+def _verify_state_step(db: Session, inc: Incident) -> dict:
+    """Agent step 1: ask PayPal for the CURRENT state (read-only GET) and record it as evidence before diagnosing."""
+    if inc.is_synthetic:
+        return {"step": "verify_state", "status": "skipped", "detail": "Skipped live state check: this is a synthetic fixture, so there is no real PayPal order to query."}
+    if not get_settings().paypal_configured:
+        return {"step": "verify_state", "status": "skipped", "detail": "Skipped live state check: PayPal credentials are not configured."}
+    from . import paypal_ops  # local import avoids a circular import
+
+    try:
+        body, res = paypal_ops.lookup_order(db, inc.order_id, actor="ai-investigator")
+    except Exception as e:  # never let a failed check break the investigation
+        reason = getattr(e, "detail", None)
+        if isinstance(reason, dict):
+            reason = reason.get("reason") or reason.get("error")
+        return {"step": "verify_state", "status": "failed",
+                "detail": f"Could not re-check PayPal ({str(reason or type(e).__name__)[:140]}); continuing with the evidence already recorded."}
+    state = res.event.transaction_state or body.get("status")
+    return {"step": "verify_state", "status": "ok", "detail": f"Checked the current order state with PayPal (read-only): {state}. Recorded as evidence."}
+
+
+def run_investigation(db: Session, incident: Incident, actor: str = "user", use_llm: bool = True,
+                      verify: bool = True) -> tuple[Investigation, TimelineAnalysis, SafetyResult]:
     from .ai.investigator import investigate  # local import keeps the AI layer optional at import time
 
+    steps: list[dict] = []
+    if verify:
+        steps.append(_verify_state_step(db, incident))
     inc = refresh_order(db, incident.order_id) or incident
     if inc.status == "open":
         inc.status = "investigating"
     a = analyze_order(db, inc.order_id)
     safety = evaluate(a)
     sev = compute_severity(a)
+    steps.append({"step": "safety_rules", "status": "ok",
+                  "detail": f"Applied {len(safety.rules_triggered)} deterministic safety rules; {len(safety.prohibited_actions)} unsafe actions blocked."})
     result = investigate(a, safety, sev, {"reference": inc.reference, "incident_type": inc.incident_type, "severity": inc.severity,
                                            "is_synthetic": inc.is_synthetic}, use_llm=use_llm)
+    if result.generated_by.startswith("llm:"):
+        steps.append({"step": "ai_diagnosis", "status": "ok",
+                      "detail": f"Diagnosis written by {result.generated_by[4:]} and validated against the evidence and safety rules."})
+    else:
+        why = result.validation.get("fallback_reason") or "AI output unavailable or rejected"
+        steps.append({"step": "ai_diagnosis", "status": "skipped", "detail": f"Used the rules-only diagnosis ({why})."})
+    result.validation["agent_steps"] = steps
     d = result.diagnosis
     inv = Investigation(
         incident_id=inc.id, summary=d.summary, root_cause=d.root_cause,

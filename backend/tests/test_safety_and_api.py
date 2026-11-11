@@ -104,7 +104,7 @@ def test_successful_capture_uses_idempotency_key(client, db, monkeypatch):
     db.commit()
     seen = {}
 
-    def ok(order_id, request_id):
+    def ok(order_id, request_id, read_timeout=None):
         seen["rid"] = request_id
         return paypal.PayPalResponse(201, {"status": "COMPLETED", "purchase_units": [{"payments": {"captures": [{"id": "CAP9", "status": "COMPLETED", "amount": {"value": "20.00", "currency_code": "USD"}}]}}]}, "dbg1", request_id)
     monkeypatch.setattr(paypal, "capture_order", ok)

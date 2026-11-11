@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from .. import paypal_ops
 from ..db import get_db
+from ..config import get_settings
 from ..schemas import CaptureIn, CreateOrderIn
 from ..security import require_api_key
 from fastapi import HTTPException
@@ -30,4 +31,6 @@ def capture_order(order_id: str, body: CaptureIn, db: Session = Depends(get_db))
     """Human-approved capture. The safety engine blocks it if a capture is already confirmed or its outcome is unverified."""
     if not body.confirm:
         raise HTTPException(400, "Explicit human approval required: set confirm=true.")
-    return paypal_ops.capture(db, order_id, body.approved_by)
+    if body.simulate_timeout and not get_settings().enable_demo:
+        raise HTTPException(403, "simulate_timeout is a demo feature and is disabled (ENABLE_DEMO=false).")
+    return paypal_ops.capture(db, order_id, body.approved_by, simulate_timeout=body.simulate_timeout)

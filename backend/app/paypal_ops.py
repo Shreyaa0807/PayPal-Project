@@ -18,7 +18,8 @@ def _http(e: Exception) -> HTTPException:
     if isinstance(e, paypal.PayPalTimeout):
         return HTTPException(504, "PayPal did not respond in time. The outcome is unknown; check the current state before retrying.")
     if isinstance(e, paypal.PayPalError):
-        return HTTPException(502 if e.status >= 500 else 422, {"paypal_status": e.status, "error": e.error_code, "debug_id": e.debug_id})
+        return HTTPException(502 if e.status >= 500 else 422, {"paypal_status": e.status, "error": e.error_code, "reason": e.detail_text,
+                                                              "debug_id": e.debug_id, "paypal_details": e.body.get("details")})
     return HTTPException(500, "Unexpected PayPal error")
 
 
@@ -53,7 +54,7 @@ def lookup_order(db: Session, order_id: str, actor: str = "user") -> tuple[dict,
     return resp.body, result
 
 
-def capture(db: Session, order_id: str, approved_by: str) -> dict:
+def capture(db: Session, order_id: str, approved_by: str, simulate_timeout: bool = False) -> dict:
     order = service.get_order(db, order_id)
     if order is None:
         raise HTTPException(404, "Unknown order. Create it through this API or look it up first.")
@@ -66,11 +67,12 @@ def capture(db: Session, order_id: str, approved_by: str) -> dict:
     request_id = order.capture_request_id or str(uuid4())
     order.capture_request_id = request_id
     db.commit()
-    service.audit(db, actor=approved_by, action="capture_approved_by_human", order_ref=order_id, details={"request_id": request_id})
+    service.audit(db, actor=approved_by, action="capture_approved_by_human", order_ref=order_id,
+                  details={"request_id": request_id, "simulated_slow_network": simulate_timeout})
     service.record_event(db, order_ref=order_id, source=C.SOURCE_LOG, event_type=C.ET_CAPTURE_REQUESTED, correlation_id=request_id,
                          payload={"note": "Capture submitted with PayPal-Request-Id"}, refresh=False, actor=approved_by)
     try:
-        resp = paypal.capture_order(order_id, request_id)
+        resp = paypal.capture_order(order_id, request_id, read_timeout=0.3 if simulate_timeout else None)
     except paypal.PayPalTimeout:
         service.record_event(db, order_ref=order_id, source=C.SOURCE_LOG, event_type=C.ET_REQUEST_TIMEOUT, correlation_id=request_id,
                              payload={"message": "Capture request to PayPal timed out"}, refresh=False)

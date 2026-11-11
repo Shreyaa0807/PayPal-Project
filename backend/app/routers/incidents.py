@@ -7,11 +7,12 @@ from sqlalchemy.orm import Session
 
 from .. import constants as C
 from .. import paypal, paypal_ops, report, service
+from ..ai import log_extract
 from ..config import get_settings
 from ..db import get_db
 from ..models import AuditLog, Incident
 from ..safety import evaluate
-from ..schemas import EventIn, InvestigateIn, OpenIncidentIn, ResolveIn, event_dict, incident_dict, investigation_dict
+from ..schemas import EventIn, InvestigateIn, LogIn, OpenIncidentIn, ResolveIn, event_dict, incident_dict, investigation_dict
 from ..security import require_api_key
 from ..timeutil import utcnow
 
@@ -105,11 +106,18 @@ def ingest_event(incident_id: str, body: EventIn, db: Session = Depends(get_db))
     return {"event": event_dict(res.event), "created": res.created, "duplicate_ignored": not res.created}
 
 
+@router.post("/incidents/{incident_id}/logs", status_code=201)
+def ingest_log(incident_id: str, body: LogIn, db: Session = Depends(get_db)):
+    """Paste a raw merchant log. The AI extracts events; code validates each one against the pasted text."""
+    inc = get_incident_or_404(db, incident_id)
+    return log_extract.ingest_log(db, inc, body.log_text, use_llm=body.use_llm)
+
+
 @router.post("/incidents/{incident_id}/investigate")
 def investigate(incident_id: str, body: InvestigateIn | None = None, db: Session = Depends(get_db)):
     body = body or InvestigateIn()
     inc = get_incident_or_404(db, incident_id)
-    inv, a, safety = service.run_investigation(db, inc, actor=body.actor, use_llm=body.use_llm)
+    inv, a, safety = service.run_investigation(db, inc, actor=body.actor, use_llm=body.use_llm, verify=body.verify)
     db.refresh(inc)
     return {"incident": incident_dict(inc), "investigation": investigation_dict(inv), "safety": safety.model_dump(),
             "findings": [f.model_dump() for f in a.findings]}
